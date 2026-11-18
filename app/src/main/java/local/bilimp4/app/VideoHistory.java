@@ -30,7 +30,7 @@ final class VideoHistory extends SQLiteOpenHelper {
 
     record Folder(String key, String title, String directory) {}
 
-    record Download(String link, int quality, boolean danmaku, boolean audioOnly) {}
+    record Download(String link, int quality, String danmakuMode, boolean mkv, boolean audioOnly) {}
 
     record Entry(long id, String title, String source, State state, String stage, int percent,
                  Uri uri, String note, boolean burned, long updated, Folder folder, Download download) {
@@ -42,7 +42,7 @@ final class VideoHistory extends SQLiteOpenHelper {
     record CacheResult(Uri uri, boolean confirmed) {}
 
     VideoHistory(Context context) {
-        super(context, "video-history.db", null, 4);
+        super(context, "video-history.db", null, 5);
         this.context = context.getApplicationContext();
     }
 
@@ -51,7 +51,7 @@ final class VideoHistory extends SQLiteOpenHelper {
                 + " state TEXT NOT NULL, stage TEXT, percent INTEGER NOT NULL DEFAULT -1, uri TEXT UNIQUE,"
                 + " note TEXT, burned INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL,"
                 + " folder_key TEXT, folder_title TEXT, directory TEXT, cache_key TEXT,"
-                + " link TEXT, quality INTEGER, danmaku INTEGER, audio_only INTEGER)");
+                + " link TEXT, quality INTEGER, danmaku INTEGER, audio_only INTEGER, mkv INTEGER, dmode TEXT)");
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
@@ -71,6 +71,10 @@ final class VideoHistory extends SQLiteOpenHelper {
         if (oldVersion < 4) {
             db.execSQL("ALTER TABLE videos ADD COLUMN audio_only INTEGER");
         }
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE videos ADD COLUMN mkv INTEGER");
+            db.execSQL("ALTER TABLE videos ADD COLUMN dmode TEXT");
+        }
     }
 
     void recover() {
@@ -89,8 +93,10 @@ final class VideoHistory extends SQLiteOpenHelper {
         if (download != null) {
             values.put("link", download.link());
             values.put("quality", download.quality());
-            values.put("danmaku", download.danmaku());
+            values.put("danmaku", !ExportOptions.DanmakuMode.NONE.name().equals(download.danmakuMode()));
             values.put("audio_only", download.audioOnly());
+            values.put("mkv", download.mkv());
+            values.put("dmode", download.danmakuMode());
         }
         return getWritableDatabase().insertOrThrow(TABLE, null, values);
     }
@@ -174,7 +180,8 @@ final class VideoHistory extends SQLiteOpenHelper {
         List<Entry> entries = new ArrayList<>();
         try (Cursor cursor = getReadableDatabase().query(TABLE,
                 new String[]{"_id", "title", "source", "state", "stage", "percent", "uri", "note", "burned", "updated",
-                        "folder_key", "folder_title", "directory", "link", "quality", "danmaku", "audio_only"},
+                        "folder_key", "folder_title", "directory", "link", "quality", "danmaku", "audio_only",
+                        "mkv", "dmode"},
                 null, null, null, null,
                 "CASE state WHEN 'RUNNING' THEN 0 WHEN 'QUEUED' THEN 1 ELSE 2 END, "
                         + "CASE WHEN state='QUEUED' THEN updated ELSE -updated END, "
@@ -183,8 +190,13 @@ final class VideoHistory extends SQLiteOpenHelper {
                 String uri = cursor.getString(6);
                 Folder folder = cursor.isNull(10) ? null
                         : new Folder(cursor.getString(10), cursor.getString(11), cursor.getString(12));
+                String mode = cursor.isNull(18)
+                        ? (cursor.getInt(15) != 0 ? ExportOptions.DanmakuMode.BURN.name()
+                                : ExportOptions.DanmakuMode.NONE.name())
+                        : cursor.getString(18);
                 Download download = cursor.isNull(13) ? null
-                        : new Download(cursor.getString(13), cursor.getInt(14), cursor.getInt(15) != 0, cursor.getInt(16) != 0);
+                        : new Download(cursor.getString(13), cursor.getInt(14), mode,
+                                cursor.getInt(17) != 0, cursor.getInt(16) != 0);
                 entries.add(new Entry(cursor.getLong(0), cursor.getString(1), cursor.getString(2),
                         State.valueOf(cursor.getString(3)), cursor.getString(4), cursor.getInt(5),
                         uri == null ? null : Uri.parse(uri), cursor.getString(7), cursor.getInt(8) != 0,
@@ -238,17 +250,19 @@ final class VideoHistory extends SQLiteOpenHelper {
     }
 
     private static String exportName(String name) {
-        return name.toLowerCase(Locale.ROOT).replaceFirst(" \\(\\d+\\)(?=\\.mp4$)", "");
+        return name.toLowerCase(Locale.ROOT)
+                .replaceFirst("\\.(mp4|mkv|m4a)$", "")
+                .replaceFirst(" \\(\\d+\\)$", "");
     }
 
     void importPrevious(Context context) {
         Uri downloads = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
-        String selection = "relative_path LIKE ? AND mime_type=? AND owner_package_name=? AND is_pending=0";
+        String selection = "relative_path LIKE ? AND mime_type IN (?,?) AND owner_package_name=? AND is_pending=0";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) selection += " AND is_trashed=0";
         try (Cursor cursor = context.getContentResolver().query(downloads,
                 new String[]{"_id", "_display_name", "date_added", "relative_path"},
                 selection,
-                new String[]{ExportTask.PATH + "/%", "video/mp4", context.getPackageName()}, null)) {
+                new String[]{ExportTask.PATH + "/%", "video/mp4", "video/x-matroska", context.getPackageName()}, null)) {
             if (cursor == null) return;
             SQLiteDatabase db = getWritableDatabase();
             db.beginTransaction();
@@ -259,7 +273,7 @@ final class VideoHistory extends SQLiteOpenHelper {
                     values.put("title", title);
                     values.put("source", IMPORTED);
                     values.put("uri", Uri.withAppendedPath(downloads, cursor.getString(0)).toString());
-                    values.put("burned", title != null && title.matches("(?i).* - 弹幕(?: \\(\\d+\\))?\\.mp4"));
+                    values.put("burned", title != null && title.matches("(?i).* - 弹幕(?: \\(\\d+\\))?\\.(mp4|mkv)"));
                     values.put("updated", cursor.getLong(2) * 1000);
                     String path = cursor.getString(3);
                     String directory = path.substring(ExportTask.PATH.length() + 1);

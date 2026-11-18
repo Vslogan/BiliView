@@ -81,7 +81,8 @@ public final class ExportService extends Service {
 
     void completed(ExportTask.Result result, String failure, int remaining) {
         if (remaining > 0 || "已取消".equals(failure)) return;
-        String title = result == null ? "处理失败" : result.audio() ? "已保存音频" : "已保存 MP4";
+        String title = result == null ? "处理失败"
+                : result.audio() ? "已保存音频" : result.mkv() ? "已保存 MKV" : "已保存 MP4";
         String text = result == null ? failure : result.name();
         notifications.notify(COMPLETE, notification(title, text, false).build());
     }

@@ -1,6 +1,6 @@
 # BiliView
 
-BiliView 是由 JHR-deve 独立开发的 Android 应用，可下载 B 站视频和合集、批量转换离线缓存，并将滚动弹幕直接烧录进 MP4。支持 Android 10 及以上，界面采用 Material 3，跟随系统浅色和深色主题。
+BiliView 是由 JHR-deve 独立开发的 Android 应用，可下载 B 站视频和合集、批量转换离线缓存，并把滚动弹幕烧录进画面、导出为 ASS 字幕文件或内嵌为 MKV 字幕轨。支持 Android 10 及以上，界面采用 Material 3，跟随系统浅色和深色主题。
 
 ## 界面与功能
 
@@ -16,8 +16,9 @@ BiliView 是由 JHR-deve 独立开发的 Android 应用，可下载 B 站视频�
 1. **链接下载**。粘贴 B 站视频链接、BV/AV 号或 b23.tv 短链接，解析后选择画质。也可解析 UP 主空间的合集或系列链接，多选后加入队列。只需要声音时，勾选「仅下载音频」导出 M4A。
 2. **收藏夹**。登录后从侧边栏打开「收藏夹」，可浏览账号的收藏夹、追番和追剧，勾选后批量加入下载队列。
 3. **本地转换**。可扫描哔哩哔哩及概念版的离线缓存，也可选一个共享文件夹。BiliView 会自动配对同目录的音视频文件，批量转换会跳过已有成品。
-4. **嵌入弹幕**。下载和转换前可勾选「将弹幕嵌入 MP4」，导出后可用系统播放器观看。本机默认字号为 80%，不透明度为 70%。也可扫码登录并启用「跟随 B 站弹幕设置」。
-5. **管理成品**。MP4 保存在「下载 / BiliMP4」，合集成品各自归入子文件夹，仅音频导出的 `.m4a` 与之一同保存。失败、中断或取消的链接下载可在原记录中重试。
+4. **导出格式**。视频可导出为 MP4 或 MKV。两者都是直接重新打包，不重新编码，保留原始画质；MKV 额外支持把弹幕作为字幕轨内嵌进去。
+5. **弹幕处理**。下载和转换前可在「弹幕」选项中选择：关闭、烧录进画面（重新编码）、导出 ASS 字幕文件（与视频同名的 `.ass`，MP4/MKV 均可），或内嵌 ASS 字幕轨（仅 MKV，可在播放器中开关）。本机默认字号为 80%，不透明度为 70%，也可扫码登录并启用「跟随 B 站弹幕设置」；同一组样式同时作用于烧录与 ASS 字幕。
+6. **管理成品**。成品保存在「下载 / BiliMP4」，合集成品各自归入子文件夹，仅音频导出的 `.m4a` 与弹幕导出的 `.ass` 与之一同保存。失败、中断或取消的链接下载可在原记录中重试。
 
 > 从 BiliView 0.6.3 起，下载、合并与烧录可在后台继续。长视频烧录弹幕需要重新编码，耗时可能较长。开始下载或转换后，点「后台下载」可跳到侧边栏的「下载记录」查看进度，然后可以切换到其他应用。允许通知后，可从系统通知查看进度和完成结果。
 
@@ -79,12 +80,12 @@ BiliView 通过 GitHub 发布页的跳转判断最新版本，不依赖接口的
 - 下载完成后会先校验安装包的 SHA-256，再交给系统安装器。首次更新需要在系统设置中允许 BiliView 安装未知来源的应用。
 - 「稍后」只对当前版本生效，之后发布了更高的版本仍会提醒。
 
-也可以直接从 [GitHub Releases](https://github.com/JHR-deve/BiliView/releases) 手动下载 APK：选择标有「Latest」的版本，展开「Assets」下载 `.apk`，在 Android 上打开并按提示安装。沿用同一签名时，新版可覆盖旧版并保留应用数据。
+也可以直接从 [GitHub Releases](https://github.com/Vslogan/BiliView/releases) 手动下载 APK：选择标有「Latest」的版本，展开「Assets」下载 `.apk`，在 Android 上打开并按提示安装。沿用同一签名时，新版可覆盖旧版并保留应用数据。
 
 <details>
 <summary>维护者发布流程</summary>
 
-应用用发布标签里的版本号（如 `v0.7.0`）与 `versionName` 逐段比较，因此发布前请确认递增了 `app/build.gradle` 中的 `versionCode` 和 `versionName`，并且标签版本高于当前 `versionName`。把 APK 上传到该 Release 并标记为 Latest，应用的自动检查就会识别到。
+应用用发布标签里的版本号（如 `v0.8.0`）与 `versionName` 逐段比较，因此发布前请确认递增了 `app/build.gradle` 中的 `versionCode` 和 `versionName`，并且标签版本高于当前 `versionName`。推送 `v*` 标签会触发 GitHub Actions 自动构建并把 `BiliView-<版本>-debug.apk` 上传到对应 Release（也可在 Actions 页手动触发）；资产命名与应用内更新检查的推导规则一致，标记为 Latest 后应用的自动检查就会识别到。
 
 </details>
 ## 开源说明
@@ -93,7 +94,7 @@ BiliView 通过 GitHub 发布页的跳转判断最新版本，不依赖接口的
 
 ### 技术参考与依赖
 
-Android 界面、缓存转换和弹幕烧录流程为本项目独立实现。
+Android 界面、缓存转换、弹幕烧录与 MKV 封装流程为本项目独立实现。弹幕转 ASS 的布局思路参考了 [bili_merger](https://github.com/zhiting9420/bili_merger)（GPL-3.0）。
 
 主要开源组件包括 AndroidX、Material Components、Media3、Shizuku API、ZXing 和 Protocol Buffers。各组件保留自己的许可证。
 

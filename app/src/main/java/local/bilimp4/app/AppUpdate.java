@@ -20,8 +20,8 @@ import java.util.Locale;
 import java.util.Set;
 
 final class AppUpdate {
-    static final String PAGE = "https://github.com/JHR-deve/BiliView/releases";
-    private static final String LATEST = "https://api.github.com/repos/JHR-deve/BiliView/releases/latest";
+    static final String PAGE = "https://github.com/Vslogan/BiliView/releases";
+    private static final String LATEST = "https://api.github.com/repos/Vslogan/BiliView/releases/latest";
     private static final Set<String> FEED_HOSTS = Set.of("api.github.com");
     private static final Set<String> DOWNLOAD_HOSTS = Set.of(
             "github.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com");

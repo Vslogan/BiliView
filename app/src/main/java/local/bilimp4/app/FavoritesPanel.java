@@ -23,7 +23,6 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.checkbox.MaterialCheckBox;
 import com.google.android.material.imageview.ShapeableImageView;
-import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.shape.ShapeAppearanceModel;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -40,9 +39,7 @@ import java.util.concurrent.Executors;
 final class FavoritesPanel implements AutoCloseable {
     interface Actions {
         void download(String key, String title, List<BiliFavorites.Entry> entries,
-                      boolean embedDanmaku, boolean audioOnly, int quality);
-
-        void danmakuSettings();
+                      ExportOptions options, boolean audioOnly, int quality);
 
         void signIn();
     }
@@ -933,28 +930,21 @@ final class FavoritesPanel implements AutoCloseable {
         });
         body.addView(pick, activity.spacing(16));
 
-        MaterialSwitch danmaku = new MaterialSwitch(activity);
-        danmaku.setText("将弹幕嵌入 MP4");
-        danmaku.setMinHeight(activity.dp(48));
-        danmaku.setChecked(false);
-        body.addView(danmaku, activity.spacing(14));
-        MaterialButton settings = activity.button("弹幕设置", androidx.appcompat.R.attr.borderlessButtonStyle);
-        settings.setOnClickListener(view -> actions.danmakuSettings());
-        body.addView(settings, new LinearLayout.LayoutParams(-2, -2));
+        ExportOptionsControl exportOptions = new ExportOptionsControl(activity, body);
 
         MaterialCheckBox audio = new MaterialCheckBox(activity);
         audio.setText("仅下载音频（M4A）");
         audio.setMinHeight(activity.dp(44));
         audio.setChecked(false);
         body.addView(audio, activity.spacing(6));
-        TextView hint = activity.text("只保存音轨为 M4A，不能嵌入弹幕。", 12, true);
+        TextView hint = activity.text("只保存音轨为 M4A，不能处理弹幕。", 12, true);
         body.addView(hint, activity.spacing(2));
         boolean startAudio = audio.isChecked();
         hint.setVisibility(startAudio ? View.VISIBLE : View.GONE);
-        danmaku.setEnabled(!startAudio);
+        exportOptions.setBusy(startAudio);
         audio.setOnCheckedChangeListener((view, checked) -> {
             hint.setVisibility(checked ? View.VISIBLE : View.GONE);
-            danmaku.setEnabled(!checked);
+            exportOptions.setBusy(checked);
         });
 
         body.addView(activity.text("视频没有所选档位时，自动使用不高于它的可用画质。", 12, true),
@@ -964,11 +954,11 @@ final class FavoritesPanel implements AutoCloseable {
         MaterialButton submit = activity.button("加入队列", com.google.android.material.R.attr.materialButtonStyle);
         submit.setOnClickListener(view -> {
             boolean audioOnly = audio.isChecked();
-            boolean embed = danmaku.isChecked() && !audioOnly;
+            ExportOptions options = audioOnly ? null : exportOptions.current();
             sheet.dismiss();
             setSelecting(false);
             actions.download(kind == KIND_FOLDERS ? "folder:" + folderId : "season:" + seasonId,
-                    levelTitle, picked, embed, audioOnly, quality[0]);
+                    levelTitle, picked, options, audioOnly, quality[0]);
         });
         body.addView(submit, activity.spacing(16));
         sheet.setContentView(body);
