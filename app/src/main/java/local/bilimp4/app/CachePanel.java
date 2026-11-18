@@ -44,7 +44,7 @@ final class CachePanel implements AutoCloseable {
 
     private final MainActivity activity;
     private final Executor worker;
-    private final BiConsumer<List<CacheEntry>, DanmakuStyle.Options> export;
+    private final BiConsumer<List<CacheEntry>, ExportOptions> export;
     private final VideoHistory history;
     private final Consumer<Uri> open;
     private final MaterialButton scan;
@@ -52,7 +52,7 @@ final class CachePanel implements AutoCloseable {
     private final MaterialButton batch;
     private final TextView hint;
     private final LinearLayout list;
-    private final DanmakuControls danmaku;
+    private final ExportOptionsControl exportOptions;
     private final List<MaterialButton> exportButtons = new ArrayList<>();
     private final Shizuku.UserServiceArgs service;
     private List<CacheEntry> entries = List.of();
@@ -91,7 +91,7 @@ final class CachePanel implements AutoCloseable {
     };
 
     CachePanel(MainActivity activity, LinearLayout panel, Executor worker, VideoHistory history,
-               BiConsumer<List<CacheEntry>, DanmakuStyle.Options> export, Consumer<Uri> open) {
+               BiConsumer<List<CacheEntry>, ExportOptions> export, Consumer<Uri> open) {
         this.activity = activity;
         this.worker = worker;
         this.export = export;
@@ -103,7 +103,7 @@ final class CachePanel implements AutoCloseable {
                 .processNameSuffix("cache").daemon(false).version(2);
 
         panel.addView(activity.text("转换本地缓存", 28, false));
-        panel.addView(activity.text("自动配对音视频，点选一条缓存即可导出 MP4。", 14, true), activity.spacing(8));
+        panel.addView(activity.text("自动配对音视频，点选一条缓存即可导出视频。", 14, true), activity.spacing(8));
         boolean restricted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
         panel.addView(activity.text(activity.getString(restricted
                 ? R.string.cache_access_android_11 : R.string.cache_access), 13, true), activity.spacing(16));
@@ -126,8 +126,8 @@ final class CachePanel implements AutoCloseable {
         hint = activity.text("", 13, true);
         hint.setVisibility(TextView.GONE);
         panel.addView(hint, activity.spacing(12));
-        danmaku = new DanmakuControls(activity, panel, false);
-        danmaku.setVisible(false);
+        exportOptions = new ExportOptionsControl(activity, panel);
+        exportOptions.setVisible(false);
         batch = activity.button("批量转换", com.google.android.material.R.attr.materialButtonOutlinedStyle);
         batch.setVisibility(TextView.GONE);
         panel.addView(batch, activity.spacing(8));
@@ -379,7 +379,7 @@ final class CachePanel implements AutoCloseable {
             this.entries = entries;
             results = history.cacheResults(entries);
             renderEntries();
-            danmaku.setVisible(!entries.isEmpty());
+            exportOptions.setVisible(!entries.isEmpty());
         }
         showHint(entries == null || entries.isEmpty() ? empty
                 : activity.getString(R.string.cache_count, entries.size()));
@@ -406,7 +406,7 @@ final class CachePanel implements AutoCloseable {
         }
         batch.setVisibility(unconverted.size() > 1 ? TextView.VISIBLE : TextView.GONE);
         batch.setOnClickListener(view -> BatchPicker.show(activity, "选择要转换的缓存", unconverted,
-                CacheEntry::title, items -> export.accept(items, danmaku.options())));
+                CacheEntry::title, items -> export.accept(items, exportOptions.current())));
     }
 
     private void showHint(String message) {
@@ -432,10 +432,10 @@ final class CachePanel implements AutoCloseable {
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         LinearLayout actions = activity.column();
         if (result != null) {
-            TextView status = activity.text(result.confirmed() ? "已转换" : "已有同名 MP4", 13, false);
+            TextView status = activity.text(result.confirmed() ? "已转换" : "已有同名视频", 13, false);
             status.setTextColor(activity.color(com.google.android.material.R.attr.colorPrimary));
             labels.addView(status, activity.spacing(4));
-            MaterialButton openButton = activity.button("打开 MP4", androidx.appcompat.R.attr.borderlessButtonStyle);
+            MaterialButton openButton = activity.button("打开视频", androidx.appcompat.R.attr.borderlessButtonStyle);
             openButton.setContentDescription("打开 " + entry.title());
             openButton.setOnClickListener(view -> {
                 open.accept(result.uri());
@@ -444,18 +444,18 @@ final class CachePanel implements AutoCloseable {
             actions.addView(openButton, new LinearLayout.LayoutParams(-1, -2));
         }
         boolean converted = result != null;
-        MaterialButton convert = activity.button(converted ? "重新转换" : "导出 MP4",
+        MaterialButton convert = activity.button(converted ? "重新转换" : "导出",
                 androidx.appcompat.R.attr.borderlessButtonStyle);
         convert.setContentDescription((converted ? "重新转换 " : "导出 ") + entry.title());
         convert.setOnClickListener(view -> {
             if (!converted) {
-                export.accept(List.of(entry), danmaku.options());
+                export.accept(List.of(entry), exportOptions.current());
                 return;
             }
             new MaterialAlertDialogBuilder(activity).setTitle("重新转换？")
-                    .setMessage("会另存一份 MP4。")
+                    .setMessage("会另存一份视频。")
                     .setNegativeButton(android.R.string.cancel, null)
-                    .setPositiveButton("重新转换", (dialog, which) -> export.accept(List.of(entry), danmaku.options()))
+                    .setPositiveButton("重新转换", (dialog, which) -> export.accept(List.of(entry), exportOptions.current()))
                     .show();
         });
         exportButtons.add(convert);
@@ -470,7 +470,7 @@ final class CachePanel implements AutoCloseable {
         scan.setEnabled(enabled);
         choose.setEnabled(enabled);
         batch.setEnabled(enabled && (!officialEntries || access == Access.READY));
-        danmaku.setBusy(!enabled);
+        exportOptions.setBusy(!enabled);
         for (MaterialButton button : exportButtons) {
             button.setEnabled(enabled && (!officialEntries || access == Access.READY));
         }

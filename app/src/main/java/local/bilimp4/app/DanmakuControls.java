@@ -1,61 +1,17 @@
 package local.bilimp4.app;
 
 import android.content.SharedPreferences;
-import android.view.Gravity;
-import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import com.google.android.material.button.MaterialButton;
-import com.google.android.material.checkbox.MaterialCheckBox;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.Slider;
 
+/** The danmaku style dialog and its persisted settings, shared by every export entry point. */
 final class DanmakuControls {
-    private final MainActivity activity;
-    private final LinearLayout controls;
-    private final MaterialCheckBox comments;
-    private final MaterialButton settings;
-
-    DanmakuControls(MainActivity activity, LinearLayout parent, boolean checkedByDefault) {
-        this.activity = activity;
-        controls = activity.column();
-        LinearLayout row = new LinearLayout(activity);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        comments = new MaterialCheckBox(activity);
-        comments.setText("将弹幕嵌入 MP4");
-        comments.setChecked(checkedByDefault);
-        comments.setMinHeight(activity.dp(44));
-        row.addView(comments, new LinearLayout.LayoutParams(0, -2, 1));
-        settings = activity.button("弹幕设置", androidx.appcompat.R.attr.borderlessButtonStyle);
-        settings.setOnClickListener(view -> showSettings(activity));
-        row.addView(settings, new LinearLayout.LayoutParams(-2, -2));
-        controls.addView(row);
-        TextView hint = activity.text("烧录会重新编码视频，弹幕会固定在画面里。", 12, true);
-        controls.addView(hint, activity.spacing(2));
-        hint.setVisibility(checkedByDefault ? View.VISIBLE : View.GONE);
-        comments.setOnCheckedChangeListener((button, checked) -> {
-            settings.setEnabled(checked && comments.isEnabled());
-            hint.setVisibility(checked ? View.VISIBLE : View.GONE);
-        });
-        parent.addView(controls, activity.spacing(4));
-        setBusy(false);
-    }
-
-    void setVisible(boolean visible) {
-        controls.setVisibility(visible ? View.VISIBLE : View.GONE);
-    }
-
-    DanmakuStyle.Options options() {
-        return comments.isChecked() ? loadOptions(activity) : null;
-    }
-
-    void setBusy(boolean busy) {
-        comments.setEnabled(!busy);
-        settings.setEnabled(!busy && comments.isChecked());
-    }
+    private DanmakuControls() {}
 
     static DanmakuStyle.Options loadOptions(MainActivity activity) {
         SharedPreferences preferences = activity.getPreferences(0);
@@ -88,8 +44,8 @@ final class DanmakuControls {
         colors.setChecked(options.local().originalColors());
         colors.setMinHeight(activity.dp(48));
         panel.addView(colors, activity.spacing(6));
-        panel.addView(activity.text("关闭原色时使用白字黑边。字号会随视频尺寸缩放，密集弹幕自动避让。", 13, true),
-                activity.spacing(4));
+        panel.addView(activity.text("关闭原色时使用白字黑边。字号会随视频尺寸缩放，密集弹幕自动避让。"
+                + "这些设置同时作用于烧录和 ASS 字幕。", 13, true), activity.spacing(4));
 
         new MaterialAlertDialogBuilder(activity).setTitle("弹幕设置").setView(scroll)
                 .setNegativeButton(android.R.string.cancel, null)
@@ -119,5 +75,4 @@ final class DanmakuControls {
         panel.addView(slider, new LinearLayout.LayoutParams(-1, -2));
         return slider;
     }
-
 }

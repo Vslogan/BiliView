@@ -19,7 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 final class AboutPanel implements AutoCloseable {
-    private static final String REPOSITORY = "https://github.com/JHR-deve/BiliView";
+    private static final String REPOSITORY = "https://github.com/Vslogan/BiliView";
     private static final String RELEASES = REPOSITORY + "/releases";
     private final MainActivity activity;
     private final LinearLayout page;

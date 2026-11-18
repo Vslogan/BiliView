@@ -303,8 +303,9 @@ final class HistoryPanel {
         body.setPadding(activity.dp(16), activity.dp(14), activity.dp(16), activity.dp(9));
         body.addView(activity.text(entry.title(), 16, false));
         String date = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(new Date(entry.updated()));
-        body.addView(activity.text(entry.source() + " · " + date + (entry.burned() ? " · 已嵌入弹幕" : ""),
-                12, true), activity.spacing(4));
+        String extra = entry.burned() ? " · 已嵌入弹幕" : "";
+        if (entry.title().toLowerCase(Locale.ROOT).endsWith(".mkv")) extra += " · MKV";
+        body.addView(activity.text(entry.source() + " · " + date + extra, 12, true), activity.spacing(4));
         boolean playable = entry.state() == VideoHistory.State.DONE && VideoHistory.available(activity, entry.uri());
         TextView status = activity.text(label(entry.state(), playable), 14, true);
         body.addView(status, activity.spacing(8));

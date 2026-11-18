@@ -187,12 +187,8 @@ public final class MainActivity extends AppCompatActivity {
         favoritesPage = column();
         favorites = new FavoritesPanel(this, favoritesPage, new FavoritesPanel.Actions() {
             @Override public void download(String key, String title, List<BiliFavorites.Entry> entries,
-                                           boolean embedDanmaku, boolean audioOnly, int quality) {
-                startFavoritesDownload(key, title, entries, embedDanmaku, audioOnly, quality);
-            }
-
-            @Override public void danmakuSettings() {
-                DanmakuControls.showSettings(MainActivity.this);
+                                           ExportOptions options, boolean audioOnly, int quality) {
+                startFavoritesDownload(key, title, entries, options, audioOnly, quality);
             }
 
             @Override public void signIn() {
@@ -321,7 +317,9 @@ public final class MainActivity extends AppCompatActivity {
         panel.addView(actions, spacing(12));
         preview = new DownloadPreview(this, panel, (streams, quality, options, audioOnly) -> {
             String cookie = account.cookie();
-            var download = new VideoHistory.Download(streams.referer(), quality.id(), options != null, audioOnly);
+            var download = new VideoHistory.Download(streams.referer(), quality.id(),
+                    options == null ? ExportOptions.DanmakuMode.NONE.name() : options.danmaku().name(),
+                    options != null && options.mkv(), audioOnly);
             Request request = new Request(streams.title(), VideoHistory.DOWNLOAD, null, null, download,
                     task -> task.fromLink(streams, quality, options, cookie, audioOnly));
             enqueue(java.util.Collections.singletonList(request), false);
@@ -438,41 +436,43 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void startFavoritesDownload(String key, String title, List<BiliFavorites.Entry> entries,
-                                        boolean embedDanmaku, boolean audioOnly, int quality) {
+                                        ExportOptions options, boolean audioOnly, int quality) {
         String cookie = account.cookie();
         if (cookie == null || cookie.isEmpty()) {
             Toast.makeText(this, "登录后可以下载收藏内容", Toast.LENGTH_SHORT).show();
             return;
         }
-        DanmakuStyle.Options options = embedDanmaku && !audioOnly ? DanmakuControls.loadOptions(this) : null;
+        ExportOptions effective = audioOnly ? null : options;
         List<BiliClient.Video> videos = new ArrayList<>();
         for (BiliFavorites.Entry entry : entries) {
             videos.add(new BiliClient.Video(entry.title(), entry.link(), 0));
         }
         BiliClient.Collection collection = new BiliClient.Collection(key, title, videos);
-        enqueue(downloadRequests(collection, videos, quality, options, cookie, audioOnly), videos.size() > 1);
+        enqueue(downloadRequests(collection, videos, quality, effective, cookie, audioOnly), videos.size() > 1);
     }
 
     private List<Request> downloadRequests(BiliClient.Collection collection, List<BiliClient.Video> videos,
-                                           int preferredQuality, DanmakuStyle.Options options, String cookie,
+                                           int preferredQuality, ExportOptions options, String cookie,
                                            boolean audioOnly) {
         VideoHistory.Folder folder = history.folderFor(collection);
         List<Request> requests = new ArrayList<>();
         for (BiliClient.Video video : videos) {
-            var download = new VideoHistory.Download(video.link(), preferredQuality, options != null, audioOnly);
+            var download = new VideoHistory.Download(video.link(), preferredQuality,
+                    options == null ? ExportOptions.DanmakuMode.NONE.name() : options.danmaku().name(),
+                    options != null && options.mkv(), audioOnly);
             requests.add(downloadRequest(video.title(), folder, download, options, cookie));
         }
         return requests;
     }
 
     private void queueVideos(BiliClient.Collection collection, List<BiliClient.Video> videos, int preferredQuality,
-                             DanmakuStyle.Options options, boolean audioOnly) {
+                             ExportOptions options, boolean audioOnly) {
         String cookie = account.cookie();
         enqueue(downloadRequests(collection, videos, preferredQuality, options, cookie, audioOnly), true);
     }
 
     private Request downloadRequest(String title, VideoHistory.Folder folder, VideoHistory.Download download,
-                                    DanmakuStyle.Options options, String cookie) {
+                                    ExportOptions options, String cookie) {
         return new Request(title, VideoHistory.DOWNLOAD, folder, null, download, task -> {
             BiliClient.Streams streams = task.prepareLink(download.link(), cookie);
             List<BiliClient.Quality> choices = streams.video();
@@ -485,8 +485,7 @@ public final class MainActivity extends AppCompatActivity {
     private void retryDownload(VideoHistory.Entry entry) {
         if (current != null) return;
         VideoHistory.Download download = entry.download();
-        DanmakuStyle.Options options = download.danmaku() && !download.audioOnly()
-                ? DanmakuControls.loadOptions(this) : null;
+        ExportOptions options = download.audioOnly() ? null : ExportOptionsControl.restore(this, download);
         Request request = downloadRequest(entry.title(), entry.folder(), download, options, account.cookie());
         queue.retry(entry, request);
         requestExportNotifications();
@@ -606,7 +605,8 @@ public final class MainActivity extends AppCompatActivity {
     private void showResult(ExportTask.Result result) {
         lastResult = result;
         statusCard.setVisibility(View.VISIBLE);
-        status.setText(result.audio() ? "已保存音频" : result.burned() ? "已保存弹幕 MP4" : "已保存 MP4");
+        status.setText(result.audio() ? "已保存音频"
+                : "已保存" + (result.burned() ? "弹幕 " : "") + (result.mkv() ? "MKV" : "MP4"));
         detail.setVisibility(View.VISIBLE);
         String location = "下载 / " + ExportTask.FOLDER;
         if (result.folder() != null) location += " / " + result.folder();
@@ -693,10 +693,10 @@ public final class MainActivity extends AppCompatActivity {
         boolean audio = type.startsWith("audio/");
         Intent intent = share ? new Intent(Intent.ACTION_SEND).setType(type)
                 .putExtra(Intent.EXTRA_STREAM, uri) : new Intent(Intent.ACTION_VIEW).setDataAndType(uri, type);
-        intent.setClipData(ClipData.newRawUri(audio ? "M4A" : "MP4", uri));
+        intent.setClipData(ClipData.newRawUri(audio ? "M4A" : "视频", uri));
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
-            startActivity(share ? Intent.createChooser(intent, audio ? "分享音频" : "分享 MP4") : intent);
+            startActivity(share ? Intent.createChooser(intent, audio ? "分享音频" : "分享视频") : intent);
         } catch (ActivityNotFoundException error) {
             Toast.makeText(this, audio ? "没有可打开该音频的应用" : "没有可打开该视频的应用",
                     Toast.LENGTH_SHORT).show();

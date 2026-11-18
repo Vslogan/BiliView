@@ -1,0 +1,63 @@
+name: Release APK
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '版本标签（如 v0.8.0）；留空则构建当前 ref'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: |
+          VERSION=$(grep -oP "versionName '\K[^']+" app/build.gradle)
+          cp app/build/outputs/apk/debug/app-debug.apk "BiliView-${VERSION}-debug.apk"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: BiliView ${{ github.event.inputs.tag || github.ref_name }}
+          body: |
+            更新内容：
+            - 导出格式可选 MP4 或 MKV（MKV 封装不重新编码，保留原始画质）。
+            - 弹幕四种处理：关闭 / 烧录进画面 / 导出同名 ASS 字幕文件 / 内嵌 ASS 字幕轨（MKV，可在播放器中开关）。
+            - 链接下载、合集、收藏夹与本地缓存转换共用同一组导出选项。
+
+            APK 使用调试签名打包；覆盖安装其他签名来源的版本前请先卸载。
+          files: BiliView-*-debug.apk
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
