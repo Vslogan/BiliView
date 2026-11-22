@@ -60,8 +60,12 @@ final class MediaProbe {
     private Track track(ExportTask.Source source, int type) throws IOException {
         try (AssetFileDescriptor descriptor = source.open()) {
             if (descriptor == null) throw new IOException("无法打开缓存文件。");
-            Track parsed = parse(descriptor, type == C.TRACK_TYPE_VIDEO);
-            if (parsed != null) return parsed;
+            try {
+                Track parsed = parse(descriptor, type == C.TRACK_TYPE_VIDEO);
+                if (parsed != null) return parsed;
+            } catch (IOException | IllegalArgumentException | IndexOutOfBoundsException error) {
+                // 读取异常或布局异常都回退到全量扫描
+            }
         }
         return scanFallback(source, type);
     }

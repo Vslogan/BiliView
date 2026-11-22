@@ -69,6 +69,7 @@ final class CachePanel implements AutoCloseable {
     private final Map<String, TextView> detailViews = new HashMap<>();
     private final Map<String, MediaProbe.Info> probed = new java.util.concurrent.ConcurrentHashMap<>();
     private final Set<String> probing = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Set<String> probeFailed = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Shizuku.UserServiceArgs service;
     private List<CacheEntry> entries = List.of();
     private Map<String, VideoHistory.CacheResult> results = Map.of();
@@ -472,16 +473,19 @@ final class CachePanel implements AutoCloseable {
         info.setMaxLines(2);
         info.setEllipsize(TextUtils.TruncateAt.END);
         infoRow.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView details = activity.text("详细", 12, false);
+        TextView details = activity.text("分析", 12, false);
         details.setTextColor(activity.color(com.google.android.material.R.attr.colorPrimary));
         details.setPadding(activity.dp(8), 0, 0, 0);
-        details.setOnClickListener(view -> showDetails(entry));
-        details.setVisibility(TextView.GONE);
+        details.setOnClickListener(view -> {
+            if (probed.containsKey(ProbeStore.key(entry))) showDetails(entry);
+            else startProbe(entry, false);
+        });
         infoRow.addView(details, new LinearLayout.LayoutParams(-2, -2));
         labels.addView(infoRow, activity.spacing(4));
         infoViews.put(entry.key(), info);
         detailViews.put(entry.key(), details);
-        probe(entry);
+        MediaProbe.Info stored = probeStore.get(ProbeStore.key(entry));
+        if (stored != null) probed.put(ProbeStore.key(entry), stored);
         updateInfo(entry);
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         LinearLayout actions = activity.column();
@@ -560,30 +564,40 @@ final class CachePanel implements AutoCloseable {
 
     // ---------- 媒体信息分析 ----------
 
-    private void probe(CacheEntry entry) {
+    private void startProbe(CacheEntry entry, boolean force) {
         String key = ProbeStore.key(entry);
-        if (probed.containsKey(key)) return;
-        MediaProbe.Info cached = probeStore.get(key);
-        if (cached != null) {
-            probed.put(key, cached);
-            return;
+        if (!force) {
+            MediaProbe.Info cached = probeStore.get(key);
+            if (cached != null) {
+                probed.put(key, cached);
+                updateInfo(entry);
+                return;
+            }
         }
         if (entry.video() == null && entry.audio() == null) return;
         if (!probing.add(key)) return;
+        probeFailed.remove(key);
+        updateInfo(entry);
         probeExecutor.execute(() -> {
+            MediaProbe.Info info = null;
             try {
-                MediaProbe.Info info = prober.probe(entry);
-                if (info.video() == null && info.audio() == null) return;
-                probed.put(key, info);
-                probeStore.put(key, info);
-                activity.runOnUiThread(() -> {
-                    if (!closed) updateInfo(entry);
-                });
+                info = prober.probe(entry);
+                if (info.video() == null && info.audio() == null) info = null;
             } catch (IOException | RuntimeException ignored) {
-                // 分析失败时保留缓存元数据里的基本信息
-            } finally {
-                probing.remove(key);
+                // 失败状态在下方统一处理
             }
+            MediaProbe.Info result = info;
+            probing.remove(key);
+            activity.runOnUiThread(() -> {
+                if (closed) return;
+                if (result != null) {
+                    probed.put(key, result);
+                    probeStore.put(key, result);
+                } else {
+                    probeFailed.add(key);
+                }
+                updateInfo(entry);
+            });
         });
     }
 
@@ -592,9 +606,25 @@ final class CachePanel implements AutoCloseable {
         if (view == null || closed) return;
         String key = ProbeStore.key(entry);
         MediaProbe.Info info = probed.get(key);
-        view.setText(info == null ? quickInfo(entry, probing.contains(key)) : compactInfo(info));
-        TextView detail = detailViews.get(entry.key());
-        if (detail != null) detail.setVisibility(info == null ? TextView.GONE : TextView.VISIBLE);
+        TextView action = detailViews.get(entry.key());
+        if (info != null) {
+            view.setText(compactInfo(info));
+            if (action != null) {
+                action.setText("详细");
+                action.setEnabled(true);
+            }
+            return;
+        }
+        boolean analyzing = probing.contains(key);
+        String quick = quickInfo(entry, analyzing);
+        if (!analyzing && probeFailed.contains(key)) {
+            quick = quick.isEmpty() ? "分析失败，可点「分析」重试" : quick + " · 分析失败，可重试";
+        }
+        view.setText(quick);
+        if (action != null) {
+            action.setText("分析");
+            action.setEnabled(!analyzing);
+        }
     }
 
     /** Quick facts from entry.json before the real analysis finishes. */
@@ -673,6 +703,7 @@ final class CachePanel implements AutoCloseable {
         new MaterialAlertDialogBuilder(activity).setTitle(entry.title())
                 .setMessage(text.toString())
                 .setPositiveButton(android.R.string.ok, null)
+                .setNeutralButton("重新分析", (dialog, which) -> startProbe(entry, true))
                 .show();
     }
 
