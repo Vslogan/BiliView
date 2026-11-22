@@ -156,7 +156,34 @@ final class ExportTask {
 
     private Result exportAudio(File source, String title) throws IOException {
         progress("正在合成音频", -1);
-        return publish(title + " - 音频", false, null, true, false, output -> muxAudio(source, output));
+        return publish(title + " - 音频", false, null, ExportOptions.AudioFormat.M4A, false,
+                output -> muxAudio(source, output));
+    }
+
+    private Result audioFromFiles(CacheEntry entry, ExportOptions.AudioFormat format) throws IOException {
+        if (entry.audio() == null) throw new IOException("所选缓存没有音轨文件。");
+        File audio = stageFile(entry.audio(), "正在读取音频文件");
+        File transcoded = null;
+        try {
+            if (format == ExportOptions.AudioFormat.M4A) return exportAudio(audio, entry.title());
+            transcoded = File.createTempFile("bili-audio-", format.extension(), context.getCacheDir());
+            AudioTranscoder.transcode(audio, transcoded, format, this);
+            return publishAudioFile(transcoded, entry.title() + " - 音频", format);
+        } finally {
+            audio.delete();
+            if (transcoded != null) transcoded.delete();
+        }
+    }
+
+    private Result publishAudioFile(File file, String title, ExportOptions.AudioFormat format)
+            throws IOException {
+        String stage = "正在保存 " + format.name();
+        progress(stage, -1);
+        return publish(title, false, null, format, false, output -> {
+            try (InputStream input = new FileInputStream(file)) {
+                copy(input, output, 0, file.length(), stage, this);
+            }
+        });
     }
 
     private void muxAudio(File source, FileOutputStream output) throws IOException {
@@ -230,7 +257,7 @@ final class ExportTask {
             throws IOException {
         String stage = mkv ? "正在保存 MKV" : "正在保存 MP4";
         progress(stage, -1);
-        return publish(title, burned, note, false, mkv, output -> {
+        return publish(title, burned, note, ExportOptions.AudioFormat.NONE, mkv, output -> {
             try (InputStream input = new FileInputStream(file)) {
                 copy(input, output, 0, file.length(), stage, this);
             }
@@ -238,6 +265,9 @@ final class ExportTask {
     }
 
     Result fromFiles(CacheEntry entry, ExportOptions options, String cookie) throws IOException {
+        if (options != null && options.audio() != ExportOptions.AudioFormat.NONE) {
+            return audioFromFiles(entry, options.audio());
+        }
         File video = stageFile(entry.video(), "正在读取视频文件");
         File audio = null;
         try {
@@ -305,7 +335,7 @@ final class ExportTask {
         }
     }
 
-    private static int cachePrefix(byte[] prefix, int count) {
+    static int cachePrefix(byte[] prefix, int count) {
         // Some Bilibili cache files insert nine ASCII zeroes before the first MP4 box.
         if (count < 17) return 0;
         for (int i = 0; i < 9; i++) {
@@ -330,7 +360,7 @@ final class ExportTask {
         task.progress(stage, 100);
     }
 
-    private static int percent(long position, long length, int max) {
+    static int percent(long position, long length, int max) {
         return length <= 0 ? -1 : (int) Math.min(max, 100.0 * position / length);
     }
 
@@ -341,7 +371,7 @@ final class ExportTask {
     private Result export(File video, File audio, String title, boolean mkv, String note) throws IOException {
         if (!mkv) {
             progress("正在合成 MP4", -1);
-            return publish(title, false, note, false, false, output -> mux(video, audio, output));
+            return publish(title, false, note, ExportOptions.AudioFormat.NONE, false, output -> mux(video, audio, output));
         }
         progress("正在合成 MKV", -1);
         File temp = File.createTempFile("bili-mkv-", ".mkv", context.getCacheDir());
@@ -405,14 +435,15 @@ final class ExportTask {
         };
     }
 
-    private Result publish(String title, boolean burned, String note, boolean audio, boolean mkv,
-                           VideoWriter writer) throws IOException {
+    private Result publish(String title, boolean burned, String note, ExportOptions.AudioFormat audio,
+                           boolean mkv, VideoWriter writer) throws IOException {
         check();
         ContentResolver resolver = context.getContentResolver();
         ContentValues values = new ContentValues();
         String name = fileName(title, audio, mkv);
         values.put(MediaStore.Downloads.DISPLAY_NAME, name);
-        values.put(MediaStore.Downloads.MIME_TYPE, audio ? "audio/mp4" : mkv ? "video/x-matroska" : "video/mp4");
+        values.put(MediaStore.Downloads.MIME_TYPE,
+                audio != ExportOptions.AudioFormat.NONE ? audio.mime() : mkv ? "video/x-matroska" : "video/mp4");
         values.put(MediaStore.Downloads.RELATIVE_PATH, folder == null ? PATH : PATH + "/" + folder);
         values.put(MediaStore.Downloads.IS_PENDING, 1);
         Uri uri = resolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
@@ -429,7 +460,8 @@ final class ExportTask {
             values.put(MediaStore.Downloads.IS_PENDING, 0);
             if (resolver.update(uri, values, null, null) != 1) throw new IOException("无法发布下载文件。");
             published = true;
-            return new Result(uri, displayName(resolver, uri, name), burned, note, folder, audio);
+            return new Result(uri, displayName(resolver, uri, name), burned, note, folder,
+                    audio != ExportOptions.AudioFormat.NONE);
         } finally {
             if (!published) resolver.delete(uri, null, null);
         }
@@ -595,28 +627,25 @@ final class ExportTask {
     }
 
     static String fileName(String title) {
-        return fileName(title, false);
+        return fileName(title, ExportOptions.AudioFormat.NONE, false);
     }
 
-    static String fileName(String title, boolean audio) {
-        return fileName(title, audio, false);
-    }
-
-    static String fileName(String title, boolean audio, boolean mkv) {
+    static String fileName(String title, ExportOptions.AudioFormat audio, boolean mkv) {
         String name = safeName(title);
         String lower = name.toLowerCase(Locale.ROOT);
-        if (lower.endsWith(".mp4") || lower.endsWith(".m4a") || lower.endsWith(".mkv")) {
+        if (lower.endsWith(".mp4") || lower.endsWith(".m4a") || lower.endsWith(".mkv")
+                || lower.endsWith(".mp3") || lower.endsWith(".wav")) {
             name = name.substring(0, name.length() - 4);
         }
         if (name.codePointCount(0, name.length()) > 60) {
             name = name.substring(0, name.offsetByCodePoints(0, 60));
         }
         if (name.isEmpty() || name.equals(".") || name.equals("..")) name = "B站视频";
-        return name + (audio ? ".m4a" : mkv ? ".mkv" : ".mp4");
+        return name + (audio != ExportOptions.AudioFormat.NONE ? audio.extension() : mkv ? ".mkv" : ".mp4");
     }
 
     static String stripExtension(String name) {
-        return name.replaceFirst("(?i)\\.(mp4|mkv|m4a)$", "");
+        return name.replaceFirst("(?i)\\.(mp4|mkv|m4a|mp3|wav)$", "");
     }
 
     static String folderName(String title) {
