@@ -89,6 +89,14 @@ public final class BiliCacheService extends Binder {
             cache.put("directory", folder.getPath());
             cache.put("aid", CacheEntry.aid(metadata));
             cache.put("cid", CacheEntry.cid(metadata));
+            cache.put("quality", metadata.optString("quality_pithy_description", ""));
+            cache.put("durationMs", metadata.optLong("total_time_milli", 0));
+            JSONObject episode = metadata.optJSONObject("ep");
+            if (episode == null) episode = metadata.optJSONObject("page_data");
+            cache.put("width", episode == null ? 0 : episode.optInt("width", 0));
+            cache.put("height", episode == null ? 0 : episode.optInt("height", 0));
+            cache.put("videoBytes", video.length());
+            cache.put("audioBytes", audio.length());
             cache.put("xmlFolder", danmakuFolder(root, folder, entryFolder, CacheEntry.XML));
             cache.put("protobufFolder", danmakuFolder(root, folder, entryFolder, CacheEntry.PROTOBUF));
             caches.put(cache);

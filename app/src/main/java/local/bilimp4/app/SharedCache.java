@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Locale;
 
 final class SharedCache {
-    private record Child(String name, String id, String type, Uri uri) {
+    private record Child(String name, String id, String type, Uri uri, long size) {
         boolean folder() {
             return Document.MIME_TYPE_DIR.equals(type);
         }
@@ -65,13 +65,15 @@ final class SharedCache {
         Uri uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, id);
         List<Child> files = new ArrayList<>();
         try (Cursor rows = resolver.query(uri, new String[]{
-                Document.COLUMN_DISPLAY_NAME, Document.COLUMN_DOCUMENT_ID, Document.COLUMN_MIME_TYPE
+                Document.COLUMN_DISPLAY_NAME, Document.COLUMN_DOCUMENT_ID, Document.COLUMN_MIME_TYPE,
+                Document.COLUMN_SIZE
         }, null, null, null)) {
             if (rows == null) throw new IOException("无法读取已选择的文件夹。");
             while (rows.moveToNext()) {
                 String childId = rows.getString(1);
                 files.add(new Child(rows.getString(0), childId, rows.getString(2),
-                        DocumentsContract.buildDocumentUriUsingTree(tree, childId)));
+                        DocumentsContract.buildDocumentUriUsingTree(tree, childId),
+                        rows.isNull(3) ? 0 : rows.getLong(3)));
             }
         }
         return files;
@@ -122,7 +124,8 @@ final class SharedCache {
                                     JSONObject info, Child xml, Child pb) {
         return new CacheEntry("shared:" + video.uri() + "\n" + audio.uri(), title, folder,
                 source(resolver, video), source(resolver, audio),
-                CacheEntry.aid(info), CacheEntry.cid(info), source(resolver, xml), source(resolver, pb));
+                CacheEntry.aid(info), CacheEntry.cid(info), source(resolver, xml), source(resolver, pb),
+                CacheEntry.meta(info, video.size(), audio.size()));
     }
 
     private static ExportTask.Source source(ContentResolver resolver, Child file) {

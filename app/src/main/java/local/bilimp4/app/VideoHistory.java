@@ -251,7 +251,7 @@ final class VideoHistory extends SQLiteOpenHelper {
 
     private static String exportName(String name) {
         return name.toLowerCase(Locale.ROOT)
-                .replaceFirst("\\.(mp4|mkv|m4a)$", "")
+                .replaceFirst("\\.(mp4|mkv|m4a|mp3|wav)$", "")
                 .replaceFirst(" \\(\\d+\\)$", "");
     }
 

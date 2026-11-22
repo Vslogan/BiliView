@@ -25,9 +25,14 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -53,7 +58,17 @@ final class CachePanel implements AutoCloseable {
     private final TextView hint;
     private final LinearLayout list;
     private final ExportOptionsControl exportOptions;
+    private final MaterialButton audioFormat;
+    private final TextView audioHint;
+    private LinearLayout audioControls;
     private final List<MaterialButton> exportButtons = new ArrayList<>();
+    private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
+    private final ProbeStore probeStore;
+    private final MediaProbe prober;
+    private final Map<String, TextView> infoViews = new HashMap<>();
+    private final Map<String, TextView> detailViews = new HashMap<>();
+    private final Map<String, MediaProbe.Info> probed = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Set<String> probing = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Shizuku.UserServiceArgs service;
     private List<CacheEntry> entries = List.of();
     private Map<String, VideoHistory.CacheResult> results = Map.of();
@@ -97,6 +112,8 @@ final class CachePanel implements AutoCloseable {
         this.export = export;
         this.history = history;
         this.open = open;
+        probeStore = new ProbeStore(activity.getFilesDir());
+        prober = new MediaProbe(activity.getCacheDir());
         String saved = activity.getPreferences(0).getString(FOLDER_KEY, null);
         folder = saved == null ? null : Uri.parse(saved);
         service = new Shizuku.UserServiceArgs(new ComponentName(activity, BiliCacheService.class))
@@ -128,6 +145,19 @@ final class CachePanel implements AutoCloseable {
         panel.addView(hint, activity.spacing(12));
         exportOptions = new ExportOptionsControl(activity, panel);
         exportOptions.setVisible(false);
+        LinearLayout audioRow = new LinearLayout(activity);
+        audioRow.setGravity(Gravity.CENTER_VERTICAL);
+        audioFormat = activity.button("", com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        audioFormat.setOnClickListener(view -> chooseAudioFormat());
+        audioRow.addView(audioFormat, new LinearLayout.LayoutParams(-2, -2));
+        audioHint = activity.text("", 12, true);
+        LinearLayout.LayoutParams audioHintSize = new LinearLayout.LayoutParams(0, -2, 1);
+        audioHintSize.setMarginStart(activity.dp(10));
+        audioRow.addView(audioHint, audioHintSize);
+        audioControls = audioRow;
+        panel.addView(audioRow, activity.spacing(2));
+        audioRow.setVisibility(TextView.GONE);
+        refreshAudioFormat();
         batch = activity.button("批量转换", com.google.android.material.R.attr.materialButtonOutlinedStyle);
         batch.setVisibility(TextView.GONE);
         panel.addView(batch, activity.spacing(8));
@@ -294,7 +324,10 @@ final class CachePanel implements AutoCloseable {
                             () -> openFile(source, directory, false, false), () -> openFile(source, directory, true, false),
                             item.optLong("aid"), item.optLong("cid"),
                             commentSource(source, item.optString("xmlFolder"), false),
-                            commentSource(source, item.optString("protobufFolder"), true)));
+                            commentSource(source, item.optString("protobufFolder"), true),
+                            new CacheEntry.Meta(empty(item.optString("quality")), item.optLong("durationMs"),
+                                    item.optInt("width"), item.optInt("height"),
+                                    item.optLong("videoBytes"), item.optLong("audioBytes"))));
                 }
                 activity.runOnUiThread(() -> show(entries, "没有找到完整的 B 站离线缓存。", true));
             } catch (Exception error) {
@@ -379,7 +412,9 @@ final class CachePanel implements AutoCloseable {
             this.entries = entries;
             results = history.cacheResults(entries);
             renderEntries();
-            exportOptions.setVisible(!entries.isEmpty());
+            boolean any = !entries.isEmpty();
+            exportOptions.setVisible(any && audioFormat() == ExportOptions.AudioFormat.NONE);
+            audioControls.setVisibility(any ? TextView.VISIBLE : TextView.GONE);
         }
         showHint(entries == null || entries.isEmpty() ? empty
                 : activity.getString(R.string.cache_count, entries.size()));
@@ -398,6 +433,8 @@ final class CachePanel implements AutoCloseable {
     private void renderEntries() {
         list.removeAllViews();
         exportButtons.clear();
+        infoViews.clear();
+        detailViews.clear();
         List<CacheEntry> unconverted = new ArrayList<>();
         for (CacheEntry entry : entries) {
             VideoHistory.CacheResult result = results.get(entry.key());
@@ -406,7 +443,7 @@ final class CachePanel implements AutoCloseable {
         }
         batch.setVisibility(unconverted.size() > 1 ? TextView.VISIBLE : TextView.GONE);
         batch.setOnClickListener(view -> BatchPicker.show(activity, "选择要转换的缓存", unconverted,
-                CacheEntry::title, items -> export.accept(items, exportOptions.current())));
+                CacheEntry::title, items -> export.accept(items, currentOptions())));
     }
 
     private void showHint(String message) {
@@ -429,6 +466,23 @@ final class CachePanel implements AutoCloseable {
         String location = entry.location();
         if (!entry.hasDanmakuSource()) location += " · 无弹幕来源";
         labels.addView(activity.text(location, 12, true), activity.spacing(4));
+        LinearLayout infoRow = new LinearLayout(activity);
+        infoRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView info = activity.text("", 12, true);
+        info.setMaxLines(2);
+        info.setEllipsize(TextUtils.TruncateAt.END);
+        infoRow.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView details = activity.text("详细", 12, false);
+        details.setTextColor(activity.color(com.google.android.material.R.attr.colorPrimary));
+        details.setPadding(activity.dp(8), 0, 0, 0);
+        details.setOnClickListener(view -> showDetails(entry));
+        details.setVisibility(TextView.GONE);
+        infoRow.addView(details, new LinearLayout.LayoutParams(-2, -2));
+        labels.addView(infoRow, activity.spacing(4));
+        infoViews.put(entry.key(), info);
+        detailViews.put(entry.key(), details);
+        probe(entry);
+        updateInfo(entry);
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         LinearLayout actions = activity.column();
         if (result != null) {
@@ -449,13 +503,14 @@ final class CachePanel implements AutoCloseable {
         convert.setContentDescription((converted ? "重新转换 " : "导出 ") + entry.title());
         convert.setOnClickListener(view -> {
             if (!converted) {
-                export.accept(List.of(entry), exportOptions.current());
+                export.accept(List.of(entry), currentOptions());
                 return;
             }
             new MaterialAlertDialogBuilder(activity).setTitle("重新转换？")
-                    .setMessage("会另存一份视频。")
+                    .setMessage(audioFormat() == ExportOptions.AudioFormat.NONE
+                            ? "会另存一份视频。" : "会另存一份音频。")
                     .setNegativeButton(android.R.string.cancel, null)
-                    .setPositiveButton("重新转换", (dialog, which) -> export.accept(List.of(entry), exportOptions.current()))
+                    .setPositiveButton("重新转换", (dialog, which) -> export.accept(List.of(entry), currentOptions()))
                     .show();
         });
         exportButtons.add(convert);
@@ -465,12 +520,205 @@ final class CachePanel implements AutoCloseable {
         return card;
     }
 
+    private static String empty(String value) {
+        return value == null || value.isEmpty() ? null : value;
+    }
+
+    private ExportOptions.AudioFormat audioFormat() {
+        int saved = activity.getPreferences(0).getInt("cacheAudioFormat", 0);
+        ExportOptions.AudioFormat[] formats = ExportOptions.AudioFormat.values();
+        return saved >= 0 && saved < formats.length ? formats[saved] : ExportOptions.AudioFormat.NONE;
+    }
+
+    private void chooseAudioFormat() {
+        ExportOptions.AudioFormat[] formats = ExportOptions.AudioFormat.values();
+        String[] labels = new String[formats.length];
+        for (int i = 0; i < formats.length; i++) labels[i] = formats[i].label();
+        new MaterialAlertDialogBuilder(activity).setTitle("音频导出")
+                .setSingleChoiceItems(labels, audioFormat().ordinal(), (dialog, which) -> {
+                    activity.getPreferences(0).edit().putInt("cacheAudioFormat", which).apply();
+                    dialog.dismiss();
+                    refreshAudioFormat();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void refreshAudioFormat() {
+        ExportOptions.AudioFormat format = audioFormat();
+        audioFormat.setText("音频导出 · " + (format == ExportOptions.AudioFormat.NONE ? "关闭" : format.name()));
+        boolean audioOnly = format != ExportOptions.AudioFormat.NONE;
+        audioHint.setText(audioOnly ? "仅导出音轨，忽略视频与弹幕。" : "");
+        audioHint.setVisibility(audioOnly ? TextView.VISIBLE : TextView.GONE);
+        exportOptions.setVisible(!entries.isEmpty() && !audioOnly);
+        if (batch != null) updateButtons();
+    }
+
+    private ExportOptions currentOptions() {
+        return exportOptions.current().withAudio(audioFormat());
+    }
+
+    // ---------- 媒体信息分析 ----------
+
+    private void probe(CacheEntry entry) {
+        String key = ProbeStore.key(entry);
+        if (probed.containsKey(key)) return;
+        MediaProbe.Info cached = probeStore.get(key);
+        if (cached != null) {
+            probed.put(key, cached);
+            return;
+        }
+        if (entry.video() == null && entry.audio() == null) return;
+        if (!probing.add(key)) return;
+        probeExecutor.execute(() -> {
+            try {
+                MediaProbe.Info info = prober.probe(entry);
+                if (info.video() == null && info.audio() == null) return;
+                probed.put(key, info);
+                probeStore.put(key, info);
+                activity.runOnUiThread(() -> {
+                    if (!closed) updateInfo(entry);
+                });
+            } catch (IOException | RuntimeException ignored) {
+                // 分析失败时保留缓存元数据里的基本信息
+            } finally {
+                probing.remove(key);
+            }
+        });
+    }
+
+    private void updateInfo(CacheEntry entry) {
+        TextView view = infoViews.get(entry.key());
+        if (view == null || closed) return;
+        String key = ProbeStore.key(entry);
+        MediaProbe.Info info = probed.get(key);
+        view.setText(info == null ? quickInfo(entry, probing.contains(key)) : compactInfo(info));
+        TextView detail = detailViews.get(entry.key());
+        if (detail != null) detail.setVisibility(info == null ? TextView.GONE : TextView.VISIBLE);
+    }
+
+    /** Quick facts from entry.json before the real analysis finishes. */
+    private static String quickInfo(CacheEntry entry, boolean analyzing) {
+        CacheEntry.Meta meta = entry.meta();
+        StringBuilder text = new StringBuilder();
+        if (meta != null) {
+            if (meta.quality() != null) text.append(meta.quality());
+            if (meta.width() > 0) append(text, meta.width() + "×" + meta.height());
+            if (meta.durationMs() > 0) append(text, "约 " + durationText(meta.durationMs()));
+            long size = meta.videoBytes() + meta.audioBytes();
+            if (size > 0) append(text, "约 " + bytesText(size));
+        }
+        if (analyzing) append(text, "分析中…");
+        return text.toString();
+    }
+
+    /** One compact line with the measured parameters. */
+    private static String compactInfo(MediaProbe.Info info) {
+        StringBuilder text = new StringBuilder();
+        MediaProbe.Track video = info.video();
+        if (video != null) {
+            if (video.width() > 0) append(text, video.width() + "×" + video.height());
+            if (video.fps() > 0) {
+                append(text, String.format(Locale.ROOT, "%.1f fps", video.fps()));
+            }
+            if (video.bitrateBps() > 0) append(text, bitrateText(video.bitrateBps()));
+            append(text, MediaProbe.codecName(video.codec()));
+        }
+        MediaProbe.Track audio = info.audio();
+        if (audio != null) {
+            StringBuilder part = new StringBuilder(MediaProbe.codecName(audio.codec()));
+            if (audio.sampleRate() > 0) {
+                part.append(' ').append(String.format(Locale.ROOT, "%.1f kHz", audio.sampleRate() / 1000f));
+            }
+            if (audio.channels() > 0) part.append(' ').append(channelsText(audio.channels()));
+            if (audio.bitrateBps() > 0) part.append(" · ").append(bitrateText(audio.bitrateBps()));
+            append(text, part.toString());
+        }
+        long durationMs = video != null ? video.durationMs() : audio != null ? audio.durationMs() : 0;
+        if (durationMs > 0) append(text, durationText(durationMs));
+        return text.toString();
+    }
+
+    private void showDetails(CacheEntry entry) {
+        MediaProbe.Info info = probed.get(ProbeStore.key(entry));
+        if (info == null) return;
+        StringBuilder text = new StringBuilder();
+        MediaProbe.Track video = info.video();
+        if (video != null) {
+            text.append("视频\n编码：").append(MediaProbe.codecName(video.codec()));
+            if (video.width() > 0) text.append("\n分辨率：").append(video.width()).append('×').append(video.height());
+            if (video.fps() > 0) {
+                text.append("\n平均帧率：").append(String.format(Locale.ROOT, "%.2f fps", video.fps()));
+            }
+            if (video.bitrateBps() > 0) text.append("\n码率：").append(bitrateText(video.bitrateBps()));
+            if (video.samples() > 0) text.append("\n总帧数：").append(video.samples());
+            if (video.durationMs() > 0) text.append("\n时长：").append(durationText(video.durationMs()));
+            if (video.bytes() > 0) text.append("\n媒体数据：").append(bytesText(video.bytes()));
+        }
+        MediaProbe.Track audio = info.audio();
+        if (audio != null) {
+            if (text.length() > 0) text.append("\n\n");
+            text.append("音频\n编码：").append(MediaProbe.codecName(audio.codec()));
+            if (audio.sampleRate() > 0) text.append("\n采样率：").append(audio.sampleRate()).append(" Hz");
+            if (audio.channels() > 0) text.append("\n声道：").append(channelsText(audio.channels()));
+            if (audio.bitrateBps() > 0) text.append("\n码率：").append(bitrateText(audio.bitrateBps()));
+            if (audio.durationMs() > 0) text.append("\n时长：").append(durationText(audio.durationMs()));
+            if (audio.bytes() > 0) text.append("\n媒体数据：").append(bytesText(audio.bytes()));
+        }
+        if (info.md5() != null) text.append("\n\nMD5（视频文件）：").append(info.md5());
+        CacheEntry.Meta meta = entry.meta();
+        if (meta != null && meta.quality() != null) {
+            text.append("\n画质标注：").append(meta.quality()).append("（来自缓存信息，参数以实测为准）");
+        }
+        new MaterialAlertDialogBuilder(activity).setTitle(entry.title())
+                .setMessage(text.toString())
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+    }
+
+    private static void append(StringBuilder text, String part) {
+        if (part == null || part.isEmpty()) return;
+        if (text.length() > 0) text.append(" · ");
+        text.append(part);
+    }
+
+    private static String bitrateText(long bps) {
+        if (bps >= 1_000_000) return String.format(Locale.ROOT, "%.2f Mbps", bps / 1_000_000f);
+        if (bps >= 1_000) return String.format(Locale.ROOT, "%.0f kbps", bps / 1_000f);
+        return bps + " bps";
+    }
+
+    private static String channelsText(int channels) {
+        return switch (channels) {
+            case 1 -> "单声道";
+            case 2 -> "双声道";
+            default -> channels + " 声道";
+        };
+    }
+
+    private static String durationText(long durationMs) {
+        long seconds = Math.max(0, durationMs / 1000);
+        long hours = seconds / 3600;
+        long minutes = seconds / 60 % 60;
+        long rest = seconds % 60;
+        if (hours > 0) return hours + " 小时 " + minutes + " 分 " + rest + " 秒";
+        if (minutes > 0) return minutes + " 分 " + rest + " 秒";
+        return rest + " 秒";
+    }
+
+    private static String bytesText(long bytes) {
+        if (bytes >= 1L << 30) return String.format(Locale.ROOT, "%.2f GB", bytes / (double) (1L << 30));
+        if (bytes >= 1L << 20) return String.format(Locale.ROOT, "%.1f MB", bytes / (double) (1L << 20));
+        return String.format(Locale.ROOT, "%.0f KB", bytes / 1024.0);
+    }
+
     private void updateButtons() {
         boolean enabled = !busy && !scanning;
         scan.setEnabled(enabled);
         choose.setEnabled(enabled);
         batch.setEnabled(enabled && (!officialEntries || access == Access.READY));
-        exportOptions.setBusy(!enabled);
+        audioFormat.setEnabled(enabled);
+        exportOptions.setBusy(!enabled || audioFormat() != ExportOptions.AudioFormat.NONE);
         for (MaterialButton button : exportButtons) {
             button.setEnabled(enabled && (!officialEntries || access == Access.READY));
         }
@@ -479,6 +727,7 @@ final class CachePanel implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        probeExecutor.shutdownNow();
         Shizuku.removeRequestPermissionResultListener(permission);
         Shizuku.removeBinderReceivedListener(ready);
         Shizuku.removeBinderDeadListener(stopped);
