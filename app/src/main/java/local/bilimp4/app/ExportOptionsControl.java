@@ -82,7 +82,7 @@ final class ExportOptionsControl {
         boolean mkv = preferences().getBoolean(KEY_MKV, false);
         DanmakuStyle.Options styleOptions = mode == ExportOptions.DanmakuMode.NONE ? null
                 : DanmakuControls.loadOptions(activity);
-        return new ExportOptions(mkv, mode, styleOptions, ExportOptions.AudioFormat.NONE).normalized();
+        return new ExportOptions(mkv, mode, styleOptions, ExportOptions.AudioFormat.NONE, 0).normalized();
     }
 
     /** Rebuilds the options recorded for an earlier task, with today's style settings. */
@@ -90,7 +90,7 @@ final class ExportOptionsControl {
         ExportOptions.DanmakuMode mode = parseMode(download.danmakuMode());
         DanmakuStyle.Options style = mode == ExportOptions.DanmakuMode.NONE ? null
                 : DanmakuControls.loadOptions(activity);
-        return new ExportOptions(download.mkv(), mode, style, ExportOptions.AudioFormat.NONE).normalized();
+        return new ExportOptions(download.mkv(), mode, style, ExportOptions.AudioFormat.NONE, 0).normalized();
     }
 
     private SharedPreferences preferences() {
