@@ -7,7 +7,7 @@ package local.bilimp4.app;
  * settings are ignored.
  */
 record ExportOptions(boolean mkv, ExportOptions.DanmakuMode danmaku, DanmakuStyle.Options style,
-                     ExportOptions.AudioFormat audio) {
+                     ExportOptions.AudioFormat audio, int mp3Bitrate) {
     enum DanmakuMode { NONE, BURN, ASS_FILE, ASS_EMBED }
 
     /** Audio-only export targets: plain remux, lossless PCM, or a 320 kbps MP3 encode. */
@@ -35,7 +35,7 @@ record ExportOptions(boolean mkv, ExportOptions.DanmakuMode danmaku, DanmakuStyl
         String label() {
             return switch (this) {
                 case M4A -> "M4A（直接复制音轨）";
-                case MP3 -> "MP3（320kbps 最高码率）";
+                case MP3 -> "MP3（可选码率）";
                 case WAV -> "WAV（无损 PCM）";
                 default -> "关闭";
             };
@@ -43,16 +43,21 @@ record ExportOptions(boolean mkv, ExportOptions.DanmakuMode danmaku, DanmakuStyl
     }
 
     static ExportOptions none() {
-        return new ExportOptions(false, DanmakuMode.NONE, null, AudioFormat.NONE);
+        return new ExportOptions(false, DanmakuMode.NONE, null, AudioFormat.NONE, 0);
     }
 
     /** Matroska is the only container that can carry the ASS subtitle track. */
     ExportOptions normalized() {
-        return danmaku == DanmakuMode.ASS_EMBED && !mkv ? new ExportOptions(true, danmaku, style, audio) : this;
+        return danmaku == DanmakuMode.ASS_EMBED && !mkv ? new ExportOptions(true, danmaku, style, audio, mp3Bitrate) : this;
     }
 
     /** The same video options, but exporting only the audio track in the given format. */
     ExportOptions withAudio(AudioFormat format) {
-        return new ExportOptions(mkv, danmaku, style, format == null ? AudioFormat.NONE : format);
+        return new ExportOptions(mkv, danmaku, style, format == null ? AudioFormat.NONE : format, mp3Bitrate);
+    }
+
+    /** Overrides the MP3 target bitrate in kbps; 0 means auto (match source). */
+    ExportOptions withBitrate(int bitrate) {
+        return new ExportOptions(mkv, danmaku, style, audio, bitrate);
     }
 }

@@ -149,7 +149,14 @@ final class CachePanel implements AutoCloseable {
         LinearLayout audioRow = new LinearLayout(activity);
         audioRow.setGravity(Gravity.CENTER_VERTICAL);
         audioFormat = activity.button("", com.google.android.material.R.attr.materialButtonOutlinedStyle);
-        audioFormat.setOnClickListener(view -> chooseAudioFormat());
+        audioFormat.setOnClickListener(view -> {
+            if (audioFormat() == ExportOptions.AudioFormat.MP3) chooseMp3Bitrate();
+            else chooseAudioFormat();
+        });
+        audioFormat.setOnLongClickListener(view -> {
+            chooseAudioFormat();
+            return true;
+        });
         audioRow.addView(audioFormat, new LinearLayout.LayoutParams(-2, -2));
         audioHint = activity.text("", 12, true);
         LinearLayout.LayoutParams audioHintSize = new LinearLayout.LayoutParams(0, -2, 1);
@@ -534,6 +541,10 @@ final class CachePanel implements AutoCloseable {
         return saved >= 0 && saved < formats.length ? formats[saved] : ExportOptions.AudioFormat.NONE;
     }
 
+    private int mp3Bitrate() {
+        return activity.getPreferences(0).getInt("cacheMp3Bitrate", 0); // 0=自动匹配源码率
+    }
+
     private void chooseAudioFormat() {
         ExportOptions.AudioFormat[] formats = ExportOptions.AudioFormat.values();
         String[] labels = new String[formats.length];
@@ -543,14 +554,77 @@ final class CachePanel implements AutoCloseable {
                     activity.getPreferences(0).edit().putInt("cacheAudioFormat", which).apply();
                     dialog.dismiss();
                     refreshAudioFormat();
+                    if (formats[which] == ExportOptions.AudioFormat.MP3) chooseMp3Bitrate();
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }
 
+    private void chooseMp3Bitrate() {
+        // 收集已探测的音频码率和时长，用于预测大小
+        long maxDurationMs = 0;
+        int maxSrcBitrateKbps = 0;
+        for (CacheEntry entry : entries) {
+            MediaProbe.Info info = probed.get(ProbeStore.key(entry));
+            if (info != null && info.audio() != null) {
+                MediaProbe.Track audio = info.audio();
+                if (audio.durationMs() > maxDurationMs) maxDurationMs = audio.durationMs();
+                int kbps = audio.bitrateBps() > 0 ? (int) (audio.bitrateBps() / 1000) : 0;
+                if (kbps > maxSrcBitrateKbps) maxSrcBitrateKbps = kbps;
+            }
+        }
+        final int srcKbps = maxSrcBitrateKbps;
+        final long durationMs = maxDurationMs;
+
+        int[] bitrates = {0, 128, 192, 256, 320};
+        String[] labels = new String[bitrates.length];
+        int autoPick = autoBitrate(srcKbps);
+        for (int i = 0; i < bitrates.length; i++) {
+            if (bitrates[i] == 0) {
+                labels[i] = srcKbps > 0
+                        ? "自动（匹配源 " + srcKbps + "k → " + autoPick + "k）"
+                        : "自动（推荐）";
+            } else {
+                labels[i] = bitrates[i] + " kbps";
+            }
+            if (durationMs > 0) {
+                long bytes = durationMs * (bitrates[i] == 0 ? autoPick : bitrates[i]) / 8;
+                labels[i] += "  ·  约 " + bytesText(bytes);
+                if (srcKbps > 0 && bitrates[i] > 0) {
+                    if (bitrates[i] >= srcKbps) labels[i] += "（≥源，无音质提升）";
+                    else labels[i] += "（比源小 " + (100 - bitrates[i] * 100 / srcKbps) + "%）";
+                }
+            }
+        }
+        int current = mp3Bitrate();
+        int checked = 0;
+        for (int i = 0; i < bitrates.length; i++) if (bitrates[i] == current) checked = i;
+        new MaterialAlertDialogBuilder(activity).setTitle("MP3 码率")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    activity.getPreferences(0).edit().putInt("cacheMp3Bitrate", bitrates[which]).apply();
+                    dialog.dismiss();
+                    refreshAudioFormat();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    /** 自动码率：取 ≥源码率 的最小标准档位，至少 192k。 */
+    private static int autoBitrate(int srcKbps) {
+        if (srcKbps <= 0) return 320;
+        if (srcKbps <= 128) return 192;
+        if (srcKbps <= 192) return 256;
+        return 320;
+    }
+
     private void refreshAudioFormat() {
         ExportOptions.AudioFormat format = audioFormat();
-        audioFormat.setText("音频导出 · " + (format == ExportOptions.AudioFormat.NONE ? "关闭" : format.name()));
+        String label = format == ExportOptions.AudioFormat.NONE ? "关闭" : format.name();
+        if (format == ExportOptions.AudioFormat.MP3) {
+            int kbps = mp3Bitrate();
+            label += kbps > 0 ? " " + kbps + "k" : " 自动";
+        }
+        audioFormat.setText("音频导出 · " + label);
         boolean audioOnly = format != ExportOptions.AudioFormat.NONE;
         audioHint.setText(audioOnly ? "仅导出音轨，忽略视频与弹幕。" : "");
         audioHint.setVisibility(audioOnly ? TextView.VISIBLE : TextView.GONE);
@@ -559,7 +633,7 @@ final class CachePanel implements AutoCloseable {
     }
 
     private ExportOptions currentOptions() {
-        return exportOptions.current().withAudio(audioFormat());
+        return exportOptions.current().withAudio(audioFormat()).withBitrate(mp3Bitrate());
     }
 
     // ---------- 媒体信息分析 ----------

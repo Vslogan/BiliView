@@ -25,7 +25,6 @@ import java.util.Arrays;
 @OptIn(markerClass = UnstableApi.class)
 final class AudioTranscoder {
     private static final int TIMEOUT_US = 10_000;
-    private static final int MP3_BITRATE_KBPS = 320;
     private static final int MP3_QUALITY = 7; // LAME quality: 0 best/slowest … 9 worst; 7 为稳定默认值（quality<=2 会触发 java-lame MPEGMode 空指针）
     private static final int PCM_CHUNK = 64 * 1024;
 
@@ -40,8 +39,8 @@ final class AudioTranscoder {
         void close();
     }
 
-    static void transcode(File source, File destination, ExportOptions.AudioFormat format, ExportTask task)
-            throws IOException {
+    static void transcode(File source, File destination, ExportOptions.AudioFormat format,
+                          int mp3BitrateKbps, ExportTask task) throws IOException {
         String stage = format == ExportOptions.AudioFormat.MP3 ? "正在转码 MP3" : "正在合成 WAV";
         task.progress(stage, -1);
         try (Mp4Track track = Mp4Track.open(source, C.TRACK_TYPE_AUDIO)) {
@@ -49,8 +48,8 @@ final class AudioTranscoder {
             if (sample == null || track.format() == null) {
                 throw new IOException("所选文件没有可导出的音轨。");
             }
-            PcmSink sink = format == ExportOptions.AudioFormat.MP3 ? new Mp3Sink(destination)
-                    : new WavSink(destination);
+            PcmSink sink = format == ExportOptions.AudioFormat.MP3
+                    ? new Mp3Sink(destination, mp3BitrateKbps) : new WavSink(destination);
             try {
                 decode(track, sample, sink, stage, task);
                 sink.finish();
@@ -239,15 +238,17 @@ final class AudioTranscoder {
     /** Feeds PCM into the vendored LAME encoder and writes 320 kbps MP3 frames. */
     private static final class Mp3Sink implements PcmSink {
         private final RandomAccessFile file;
+        private final int bitrateKbps;
         private LameEncoder encoder;
         private int channels;
         private byte[] pending = new byte[0];
         private byte[] encoded;
         private boolean closed;
 
-        Mp3Sink(File destination) throws IOException {
+        Mp3Sink(File destination, int bitrateKbps) throws IOException {
             file = new RandomAccessFile(destination, "rw");
             file.setLength(0);
+            this.bitrateKbps = bitrateKbps > 0 ? bitrateKbps : 320;
         }
 
         @Override public void format(int sampleRate, int channels) throws IOException {
@@ -255,7 +256,7 @@ final class AudioTranscoder {
             if (channels > 2) throw new IOException("多声道音轨无法转为 MP3，请选择 WAV 或 M4A。");
             this.channels = channels;
             try {
-                encoder = new LameEncoder(channels, sampleRate, MP3_BITRATE_KBPS, MP3_QUALITY);
+                encoder = new LameEncoder(channels, sampleRate, bitrateKbps, MP3_QUALITY);
             } catch (IllegalArgumentException | NullPointerException error) {
                 throw new IOException("该音轨的参数无法转为 MP3，请选择 WAV 或 M4A。", error);
             }

@@ -160,14 +160,15 @@ final class ExportTask {
                 output -> muxAudio(source, output));
     }
 
-    private Result audioFromFiles(CacheEntry entry, ExportOptions.AudioFormat format) throws IOException {
+    private Result audioFromFiles(CacheEntry entry, ExportOptions options) throws IOException {
+        ExportOptions.AudioFormat format = options.audio();
         if (entry.audio() == null) throw new IOException("所选缓存没有音轨文件。");
         File audio = stageFile(entry.audio(), "正在读取音频文件");
         File transcoded = null;
         try {
             if (format == ExportOptions.AudioFormat.M4A) return exportAudio(audio, entry.title());
             transcoded = File.createTempFile("bili-audio-", format.extension(), context.getCacheDir());
-            AudioTranscoder.transcode(audio, transcoded, format, this);
+            AudioTranscoder.transcode(audio, transcoded, format, options.mp3Bitrate(), this);
             return publishAudioFile(transcoded, entry.title() + " - 音频", format);
         } finally {
             audio.delete();
@@ -266,7 +267,7 @@ final class ExportTask {
 
     Result fromFiles(CacheEntry entry, ExportOptions options, String cookie) throws IOException {
         if (options != null && options.audio() != ExportOptions.AudioFormat.NONE) {
-            return audioFromFiles(entry, options.audio());
+            return audioFromFiles(entry, options);
         }
         File video = stageFile(entry.video(), "正在读取视频文件");
         File audio = null;
