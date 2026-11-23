@@ -26,7 +26,7 @@ import java.util.Arrays;
 final class AudioTranscoder {
     private static final int TIMEOUT_US = 10_000;
     private static final int MP3_BITRATE_KBPS = 320;
-    private static final int MP3_QUALITY = 2; // LAME quality: 0 best/slowest … 9 worst
+    private static final int MP3_QUALITY = 7; // LAME quality: 0 best/slowest … 9 worst; 7 为稳定默认值（quality<=2 会触发 java-lame MPEGMode 空指针）
     private static final int PCM_CHUNK = 64 * 1024;
 
     /** Receives raw little-endian 16-bit PCM; the format arrives before the first bytes. */
@@ -256,7 +256,7 @@ final class AudioTranscoder {
             this.channels = channels;
             try {
                 encoder = new LameEncoder(channels, sampleRate, MP3_BITRATE_KBPS, MP3_QUALITY);
-            } catch (IllegalArgumentException error) {
+            } catch (IllegalArgumentException | NullPointerException error) {
                 throw new IOException("该音轨的参数无法转为 MP3，请选择 WAV 或 M4A。", error);
             }
             encoded = new byte[encoder.getMP3BufferSize()];
