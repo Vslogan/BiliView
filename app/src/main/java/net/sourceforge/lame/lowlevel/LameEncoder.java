@@ -63,7 +63,7 @@ public final class LameEncoder {
         }
         lame.getFlags().setInNumChannels(channels);
         lame.getFlags().setInSampleRate(sampleRate);
-        lame.getFlags().setMode(channels == 1 ? MPEGMode.MONO : null);
+        lame.getFlags().setMode(channels == 1 ? MPEGMode.MONO : MPEGMode.STEREO);
         lame.getFlags().setVBR(VbrMode.vbr_off);
         if (bitRateKbps != BITRATE_AUTO) {
             lame.getFlags().setBitRate(bitRateKbps);

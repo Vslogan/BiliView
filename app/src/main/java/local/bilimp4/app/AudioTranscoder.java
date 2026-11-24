@@ -25,7 +25,7 @@ import java.util.Arrays;
 @OptIn(markerClass = UnstableApi.class)
 final class AudioTranscoder {
     private static final int TIMEOUT_US = 10_000;
-    private static final int MP3_QUALITY = 7; // LAME quality: 0 best/slowest … 9 worst; 7 为稳定默认值（quality<=2 会触发 java-lame MPEGMode 空指针）
+    private static final int MP3_QUALITY = 0; // LAME quality: 0 best/slowest … 9 worst；导出追求最高音质，不计耗时
     private static final int PCM_CHUNK = 64 * 1024;
 
     /** Receives raw little-endian 16-bit PCM; the format arrives before the first bytes. */
