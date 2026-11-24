@@ -542,7 +542,7 @@ final class CachePanel implements AutoCloseable {
     }
 
     private int mp3Bitrate() {
-        return activity.getPreferences(0).getInt("cacheMp3Bitrate", 0); // 0=自动匹配源码率
+        return activity.getPreferences(0).getInt("cacheMp3Bitrate", 0); // 0=自动VBR(V0) 1=VBR(V2) 其余=CBR kbps
     }
 
     private void chooseAudioFormat() {
@@ -576,32 +576,36 @@ final class CachePanel implements AutoCloseable {
         final int srcKbps = maxSrcBitrateKbps;
         final long durationMs = maxDurationMs;
 
-        int[] bitrates = {0, 128, 192, 256, 320};
-        String[] labels = new String[bitrates.length];
-        int autoPick = autoBitrate(srcKbps);
-        for (int i = 0; i < bitrates.length; i++) {
-            if (bitrates[i] == 0) {
-                labels[i] = srcKbps > 0
-                        ? "自动（匹配源 " + srcKbps + "k → " + autoPick + "k）"
-                        : "自动（推荐）";
+        // 0 = 自动 VBR（V0，音质优先）；1 = VBR V2（省空间）；其余 = CBR kbps
+        int[] choices = {0, 1, 128, 160, 192, 224, 256, 320};
+        String[] labels = new String[choices.length];
+        for (int i = 0; i < choices.length; i++) {
+            int v = choices[i];
+            if (v == 0) {
+                labels[i] = "自动 VBR（推荐）· 按内容分配码率，不浪费空间";
+                if (durationMs > 0)
+                    labels[i] += "，约 " + bytesText(durationMs * 245 / 8) + "（浮动）";
+            } else if (v == 1) {
+                labels[i] = "VBR 省空间 · 动态码率，平均约 190k";
+                if (durationMs > 0)
+                    labels[i] += "，约 " + bytesText(durationMs * 190 / 8) + "（浮动）";
             } else {
-                labels[i] = bitrates[i] + " kbps";
-            }
-            if (durationMs > 0) {
-                long bytes = durationMs * (bitrates[i] == 0 ? autoPick : bitrates[i]) / 8;
-                labels[i] += "  ·  约 " + bytesText(bytes);
-                if (srcKbps > 0 && bitrates[i] > 0) {
-                    if (bitrates[i] >= srcKbps) labels[i] += "（≥源，无音质提升）";
-                    else labels[i] += "（比源小 " + (100 - bitrates[i] * 100 / srcKbps) + "%）";
+                labels[i] = v + " kbps 固定码率";
+                if (durationMs > 0) {
+                    labels[i] += "，约 " + bytesText(durationMs * v / 8);
+                    if (srcKbps > 0) {
+                        if (v >= srcKbps) labels[i] += "（≥源 " + srcKbps + "k，保留源音质）";
+                        else labels[i] += "（低于源 " + srcKbps + "k，更小但有损）";
+                    }
                 }
             }
         }
         int current = mp3Bitrate();
         int checked = 0;
-        for (int i = 0; i < bitrates.length; i++) if (bitrates[i] == current) checked = i;
+        for (int i = 0; i < choices.length; i++) if (choices[i] == current) checked = i;
         new MaterialAlertDialogBuilder(activity).setTitle("MP3 码率")
                 .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    activity.getPreferences(0).edit().putInt("cacheMp3Bitrate", bitrates[which]).apply();
+                    activity.getPreferences(0).edit().putInt("cacheMp3Bitrate", choices[which]).apply();
                     dialog.dismiss();
                     refreshAudioFormat();
                 })
@@ -609,20 +613,12 @@ final class CachePanel implements AutoCloseable {
                 .show();
     }
 
-    /** 自动码率：取 ≥源码率 的最小标准档位，至少 192k。 */
-    private static int autoBitrate(int srcKbps) {
-        if (srcKbps <= 0) return 320;
-        if (srcKbps <= 128) return 192;
-        if (srcKbps <= 192) return 256;
-        return 320;
-    }
-
     private void refreshAudioFormat() {
         ExportOptions.AudioFormat format = audioFormat();
         String label = format == ExportOptions.AudioFormat.NONE ? "关闭" : format.name();
         if (format == ExportOptions.AudioFormat.MP3) {
             int kbps = mp3Bitrate();
-            label += kbps > 0 ? " " + kbps + "k" : " 自动";
+            label += kbps == 0 ? " VBR" : kbps == 1 ? " VBR·省" : " " + kbps + "k";
         }
         audioFormat.setText("音频导出 · " + label);
         boolean audioOnly = format != ExportOptions.AudioFormat.NONE;
