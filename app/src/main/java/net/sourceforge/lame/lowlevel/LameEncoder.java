@@ -82,6 +82,44 @@ public final class LameEncoder {
     }
 
     /**
+     * VBR constructor; the boolean parameter only serves to distinguish this
+     * signature from the CBR constructor.
+     */
+    private LameEncoder(int channels, int sampleRate, int vbrQuality, boolean vbr) {
+        lame.getFlags().setInNumChannels(channels);
+        lame.getFlags().setInSampleRate(sampleRate);
+        lame.getFlags().setMode(channels == 1 ? MPEGMode.MONO : MPEGMode.STEREO);
+        lame.getFlags().setVBR(VbrMode.vbr_mtrh);
+        lame.getFlags().setVBRQuality(vbrQuality);
+        lame.getFlags().setQuality(0); // psychoacoustic model refinement: best
+        lame.getId3().init(lame.getFlags());
+        lame.getFlags().setWriteId3tagAutomatic(false);
+        lame.getFlags().setFindReplayGain(true);
+        int result = lame.initParams();
+        effSampleRate = lame.getFlags().getOutSampleRate();
+        effBitRate = lame.getFlags().getBitRate();
+        if (result < 0) {
+            throw new IllegalArgumentException(
+                    "parameters not supported by LAME (returned " + result + ")");
+        }
+    }
+
+    /**
+     * Creates a variable bit rate encoder. VBR lets the encoder spend bits only
+     * where the audio needs them: no wasted space on simple passages, no
+     * shortage on complex ones.
+     *
+     * @param channels    number of input channels, 1 or 2
+     * @param sampleRate  input sample rate in Hz
+     * @param vbrQuality  VBR level: 0 (highest quality, ~245 kbit/s average)
+     *                    … 9 (smallest, ~65 kbit/s average)
+     * @throws IllegalArgumentException when parameters are not supported by LAME.
+     */
+    public static LameEncoder vbr(int channels, int sampleRate, int vbrQuality) {
+        return new LameEncoder(channels, sampleRate, vbrQuality, true);
+    }
+
+    /**
      * Get encoder version string.
      *
      * @return encoder version string

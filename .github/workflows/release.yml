@@ -56,6 +56,7 @@ jobs:
           name: BiliView ${{ github.event.inputs.tag || github.ref_name }}
           body: |
             更新内容：
+            - MP3 导出「自动」改为 VBR 动态码率：按内容分配码率，音质与体积两不误；另新增 VBR 省空间档和 160/224 kbps 固定档。
             - 修复 MP3 导出报错：java-lame 双声道模式未正确设置导致的初始化失败；编码质量提升至 LAME 最高档（-q 0）。
             - MP3 导出支持选择码率：自动匹配源码率（推荐）或 128/192/256/320 kbps，选择时实时预测文件大小。
             - 修复 MP3 导出报错（LAME MPEGMode 空指针），改用稳定质量参数。

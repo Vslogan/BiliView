@@ -56,7 +56,7 @@ record ExportOptions(boolean mkv, ExportOptions.DanmakuMode danmaku, DanmakuStyl
         return new ExportOptions(mkv, danmaku, style, format == null ? AudioFormat.NONE : format, mp3Bitrate);
     }
 
-    /** Overrides the MP3 target bitrate in kbps; 0 means auto (match source). */
+    /** MP3 target: 0 = auto VBR (V0, quality first); 1 = VBR V2 (smaller); 32…320 = CBR kbps. */
     ExportOptions withBitrate(int bitrate) {
         return new ExportOptions(mkv, danmaku, style, audio, bitrate);
     }

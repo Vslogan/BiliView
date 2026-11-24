@@ -19,7 +19,7 @@ import java.util.Arrays;
 /**
  * Converts a cached audio track into a standalone audio file: it decodes the track to
  * 16-bit PCM with MediaCodec and then either wraps it in a WAV container (lossless)
- * or encodes it as a 320 kbps MP3 using the vendored pure-Java LAME port. The M4A
+ * or encodes it as an MP3 (VBR or CBR) using the vendored pure-Java LAME port. The M4A
  * path needs no decoding and stays in ExportTask.
  */
 @OptIn(markerClass = UnstableApi.class)
@@ -248,7 +248,7 @@ final class AudioTranscoder {
         Mp3Sink(File destination, int bitrateKbps) throws IOException {
             file = new RandomAccessFile(destination, "rw");
             file.setLength(0);
-            this.bitrateKbps = bitrateKbps > 0 ? bitrateKbps : 320;
+            this.bitrateKbps = bitrateKbps;
         }
 
         @Override public void format(int sampleRate, int channels) throws IOException {
@@ -256,7 +256,10 @@ final class AudioTranscoder {
             if (channels > 2) throw new IOException("多声道音轨无法转为 MP3，请选择 WAV 或 M4A。");
             this.channels = channels;
             try {
-                encoder = new LameEncoder(channels, sampleRate, bitrateKbps, MP3_QUALITY);
+                // 0 = 自动 VBR（V0，音质优先）；1 = VBR V2（省空间）；32…320 = CBR kbps
+                encoder = bitrateKbps == 0 ? LameEncoder.vbr(channels, sampleRate, 0)
+                        : bitrateKbps == 1 ? LameEncoder.vbr(channels, sampleRate, 2)
+                        : new LameEncoder(channels, sampleRate, bitrateKbps, MP3_QUALITY);
             } catch (IllegalArgumentException | NullPointerException error) {
                 throw new IOException("该音轨的参数无法转为 MP3，请选择 WAV 或 M4A。", error);
             }
