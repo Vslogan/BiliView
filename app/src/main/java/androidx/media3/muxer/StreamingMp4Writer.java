@@ -110,7 +110,7 @@ public final class StreamingMp4Writer implements AutoCloseable {
         sizeField.flip();
         while (sizeField.hasRemaining()) channel.write(sizeField);
         channel.position(dataEnd);
-        writeFlushed(buildMoov());
+        writeFlushed(moov());
         finished = true;
     }
 
