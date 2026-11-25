@@ -17,10 +17,7 @@ import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
-import androidx.media3.container.Mp4OrientationData;
-import androidx.media3.muxer.BufferInfo;
-import androidx.media3.muxer.Mp4Muxer;
-import androidx.media3.muxer.MuxerException;
+import androidx.media3.muxer.StreamingMp4Writer;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -28,7 +25,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.List;
@@ -188,22 +184,34 @@ final class ExportTask {
     }
 
     private void muxAudio(File source, FileOutputStream output) throws IOException {
-        try (Mp4Track audio = Mp4Track.open(source, C.TRACK_TYPE_AUDIO)) {
-            Mp4Track.Sample sample = audio.next();
-            if (sample == null || audio.format() == null) throw new IOException("所选文件没有可导出的音轨。");
-            try (Mp4Muxer muxer = new Mp4Muxer.Builder(output).setSampleBatchingEnabled(false).build()) {
-                int track = muxer.addTrack(audio.format());
-                long end = 0;
-                while (sample != null) {
-                    check();
-                    writeSample(muxer, track, sample);
-                    end = Math.max(end, sample.timeUs());
-                    sample = audio.next();
-                    progress("正在合成音频", percent(end, audio.durationUs(), 99));
+        // 先写入可寻址的临时文件以生成带正确时长与索引的普通 MP4，再复制到目标；
+        // media3 的流式分片输出缺少时长信息，部分播放器会读错时长。
+        File muxed = File.createTempFile("bili-m4a-", ".m4a", context.getCacheDir());
+        try {
+            try (Mp4Track audio = Mp4Track.open(source, C.TRACK_TYPE_AUDIO)) {
+                Mp4Track.Sample sample = audio.next();
+                if (sample == null || audio.format() == null) throw new IOException("所选文件没有可导出的音轨。");
+                try (StreamingMp4Writer writer = new StreamingMp4Writer(muxed)) {
+                    int track = writer.addTrack(audio.format());
+                    long end = 0;
+                    while (sample != null) {
+                        check();
+                        writeSample(writer, track, sample);
+                        end = Math.max(end, sample.timeUs());
+                        sample = audio.next();
+                        progress("正在合成音频", percent(end, audio.durationUs(), 90));
+                    }
+                    writer.finish();
                 }
             }
-        } catch (MuxerException | IllegalArgumentException | IllegalStateException error) {
+            progress("正在保存音频", 90);
+            try (InputStream input = new FileInputStream(muxed)) {
+                copy(input, output, 0, muxed.length(), "正在保存音频", this);
+            }
+        } catch (IllegalArgumentException | IllegalStateException error) {
             throw new IOException("无法把音轨封装为 M4A。请检查所选文件是否完整。", error);
+        } finally {
+            muxed.delete();
         }
         progress("正在合成音频", 100);
     }
@@ -505,37 +513,44 @@ final class ExportTask {
             if (videoSample == null || audioSample == null || video.format() == null || audio.format() == null) {
                 throw new IOException("所选缓存缺少可读取的音频或视频轨。");
             }
-            try (Mp4Muxer muxer = new Mp4Muxer.Builder(output).setSampleBatchingEnabled(false).build()) {
-                int videoTrack = muxer.addTrack(video.format());
-                int audioTrack = muxer.addTrack(audio.format());
-                if (video.format().rotationDegrees != 0) {
-                    muxer.addMetadataEntry(new Mp4OrientationData(video.format().rotationDegrees));
+            File muxed = File.createTempFile("bili-mux-", ".mp4", context.getCacheDir());
+            try {
+                try (StreamingMp4Writer writer = new StreamingMp4Writer(muxed)) {
+                    int videoTrack = writer.addTrack(video.format());
+                    int audioTrack = writer.addTrack(audio.format());
+                    writeTracks(writer, video, videoTrack, videoSample, audio, audioTrack, audioSample);
+                    writer.finish();
                 }
-                writeTracks(muxer, video, videoTrack, videoSample, audio, audioTrack, audioSample);
+                progress("正在保存 MP4", -1);
+                try (InputStream input = new FileInputStream(muxed)) {
+                    copy(input, output, 0, muxed.length(), "正在保存 MP4", this);
+                }
+            } finally {
+                muxed.delete();
             }
-        } catch (MuxerException | IllegalArgumentException | IllegalStateException error) {
+        } catch (IllegalArgumentException | IllegalStateException error) {
             throw new IOException("无法将这两条音视频轨封装为 MP4。请检查缓存是否完整且可播放。", error);
         }
     }
 
-    private void writeTracks(Mp4Muxer muxer, Mp4Track video, int videoTrack, Mp4Track.Sample videoSample,
+    private void writeTracks(StreamingMp4Writer writer, Mp4Track video, int videoTrack, Mp4Track.Sample videoSample,
                              Mp4Track audio, int audioTrack, Mp4Track.Sample audioSample)
-            throws IOException, MuxerException {
+            throws IOException {
         long videoEnd = 0;
         long audioEnd = 0;
         while (videoSample != null || audioSample != null) {
             check();
             if (videoSample != null && (audioSample == null || videoSample.timeUs() <= audioSample.timeUs())) {
-                writeSample(muxer, videoTrack, videoSample);
+                writeSample(writer, videoTrack, videoSample);
                 videoEnd = Math.max(videoEnd, videoSample.timeUs());
                 videoSample = video.next();
             } else {
-                writeSample(muxer, audioTrack, audioSample);
+                writeSample(writer, audioTrack, audioSample);
                 audioEnd = Math.max(audioEnd, audioSample.timeUs());
                 audioSample = audio.next();
             }
             progress("正在合成 MP4", percent(Math.max(videoEnd, audioEnd),
-                    Math.max(video.durationUs(), audio.durationUs()), 99));
+                    Math.max(video.durationUs(), audio.durationUs()), 90));
         }
         long tolerance = Math.max(3_000_000, Math.max(videoEnd, audioEnd) / 50);
         if (Math.abs(videoEnd - audioEnd) > tolerance
@@ -545,9 +560,10 @@ final class ExportTask {
         progress("正在合成 MP4", 100);
     }
 
-    private static void writeSample(Mp4Muxer muxer, int track, Mp4Track.Sample sample) throws MuxerException {
-        byte[] data = sample.data();
-        muxer.writeSampleData(track, ByteBuffer.wrap(data), new BufferInfo(sample.timeUs(), data.length, sample.flags()));
+    private static void writeSample(StreamingMp4Writer writer, int track, Mp4Track.Sample sample)
+            throws IOException {
+        writer.writeSample(track, sample.data(), sample.timeUs(),
+                (sample.flags() & C.BUFFER_FLAG_KEY_FRAME) != 0);
     }
 
     private void muxMkv(File videoFile, File audioFile, DanmakuAss.Script subtitles, File destination)
